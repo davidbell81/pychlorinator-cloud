@@ -16,7 +16,7 @@
     }
   ],
   "requirements": [
-    "pychlorinator_cloud @ git+https://github.com/davidbell81/pychlorinator-cloud.git@4875a5f8248c252c6ff21a345194763d987b1e27"
+    "pychlorinator_cloud @ git+https://github.com/davidbell81/pychlorinator-cloud.git@10c2b31d07b8e3db9993898a780ebec7f21fd776"
   ],
-  "version": "0.2.3+fw27.2"
+  "version": "0.2.3+fw27.3"
 }
