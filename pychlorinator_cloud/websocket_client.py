@@ -866,14 +866,19 @@ class HaloWebSocketClient:
         self.data.heater_on = True
 
     async def increase_heater_setpoint(self) -> None:
+        # Halo Chlor firmware steps the heater setpoint by 2°C per command,
+        # not 1°C. Verified against fw 2.7 against AstralPool's own app —
+        # the protocol only exposes IncreaseSetpoint / DecreaseSetpoint
+        # actions, no direct setpoint write, and the device's internal
+        # increment is fixed at 2.
         await self._send_padded_write(HEATER_CMD_ID, b"\x06", refresh_cmd_ids=(0x0068, 0x044E))
         if self.data.heater_setpoint_c is not None:
-            self.data.heater_setpoint_c = min(self.data.heater_setpoint_c + 1, 45)
+            self.data.heater_setpoint_c = min(self.data.heater_setpoint_c + 2, 45)
 
     async def decrease_heater_setpoint(self) -> None:
         await self._send_padded_write(HEATER_CMD_ID, b"\x07", refresh_cmd_ids=(0x0068, 0x044E))
         if self.data.heater_setpoint_c is not None:
-            self.data.heater_setpoint_c = max(self.data.heater_setpoint_c - 1, 10)
+            self.data.heater_setpoint_c = max(self.data.heater_setpoint_c - 2, 10)
 
     async def sync_controller_clock(self, when: datetime.datetime | None = None) -> None:
         """Sync the controller date and time using the app-confirmed writes."""
