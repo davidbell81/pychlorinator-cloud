@@ -6,9 +6,8 @@ Provides start-time and stop-time controls for each equipment timer slot.
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass
 
-from homeassistant.components.time import TimeEntity
+from homeassistant.components.time import TimeEntity, TimeEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -17,12 +16,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import HaloCloudCoordinator
 from .entity import HaloCloudEntity
-
-
-@dataclass
-class _SlotTimeDesc:
-    key: str
-    name: str
 
 
 async def async_setup_entry(
@@ -73,7 +66,7 @@ class HaloTimerSlotTime(HaloCloudEntity, TimeEntity):
     ) -> None:
         self._slot_index = slot_index
         self._is_start = is_start
-        super().__init__(coordinator, _SlotTimeDesc(key=key, name=name))
+        super().__init__(coordinator, TimeEntityDescription(key=key, name=name))
 
     @property
     def available(self) -> bool:
