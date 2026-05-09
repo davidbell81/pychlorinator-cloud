@@ -24,7 +24,16 @@ from .exceptions import (
 )
 from .setpoints import build_setpoint_command
 from .signalling import map_signalling_failure
-from .timers import parse_timer_capabilities, parse_timer_config, parse_timer_setup, parse_timer_state
+from .timers import (
+    TIMER_MODE_SUMMER,
+    TIMER_MODE_WINTER,
+    TIMER_TYPE_PUMP,
+    build_timer_config_payload,
+    parse_timer_capabilities,
+    parse_timer_config,
+    parse_timer_setup,
+    parse_timer_state,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -173,6 +182,7 @@ LIGHT_CMD_ID = 0x01F5
 HEATER_CMD_ID = 0x01F6
 TIME_CMD_ID = 0x0002
 DATE_CMD_ID = 0x0003
+TIMER_CONFIG_CMD_ID = 0x0193
 
 LIGHT_MODES = {1: "Off", 2: "On", 3: "Auto"}
 ACTION_MODES = {1: "Off", 2: "Auto", 3: "On"}
@@ -636,6 +646,10 @@ class HaloWebSocketClient:
             104,
             105,
             106,
+            400,   # 0x0190 timer capabilities
+            401,   # 0x0191 timer setup / season
+            402,   # 0x0192 timer profile pointer
+            403,   # 0x0193 timer slot configs (device sends one frame per slot)
             600,
             601,
             602,
@@ -688,6 +702,54 @@ class HaloWebSocketClient:
         """Request a fresh snapshot for a single characteristic."""
         read_cmd = bytes([0x02]) + struct.pack("<H", cmd_id) + bytes(17)
         await self.send_command(read_cmd)
+
+    async def request_timer_data(self) -> None:
+        """Request a fresh snapshot of all timer characteristics."""
+        for cmd_id in (0x0190, 0x0191, 0x0192, 0x0193):
+            await self.request_data(cmd_id)
+            await _sleep_briefly(0.3)
+
+    async def write_timer_slot(
+        self,
+        slot_index: int,
+        *,
+        enabled: Optional[bool] = None,
+        start_hour: Optional[int] = None,
+        start_minute: Optional[int] = None,
+        stop_hour: Optional[int] = None,
+        stop_minute: Optional[int] = None,
+        speed_code: Optional[int] = None,
+        timer_mode: Optional[int] = None,
+    ) -> None:
+        """Write a single timer slot config (cmd 0x0193).
+
+        Unspecified fields are taken from the last received config for that slot,
+        so callers can change only the fields they care about.
+        """
+        if not self._ws or not self.data.connected:
+            raise RuntimeError("Not connected")
+        existing = self.data.timer_configs.get(slot_index)
+        if existing is None:
+            raise RuntimeError(
+                f"Timer slot {slot_index} config not yet received from device. "
+                "Wait for initial data fetch to complete."
+            )
+        payload = build_timer_config_payload(
+            slot_index,
+            enabled=enabled if enabled is not None else existing.get("active", False),
+            enables=existing.get("enables", 0),
+            start_hour=start_hour if start_hour is not None else existing.get("start_hour", 0),
+            start_minute=start_minute if start_minute is not None else existing.get("start_minute", 0),
+            stop_hour=stop_hour if stop_hour is not None else existing.get("stop_hour", 0),
+            stop_minute=stop_minute if stop_minute is not None else existing.get("stop_minute", 0),
+            speed_code=speed_code if speed_code is not None else existing.get("speed_code", 1),
+            timer_mode=timer_mode if timer_mode is not None else existing.get("timer_mode", TIMER_MODE_WINTER),
+        )
+        await self._send_padded_write(
+            TIMER_CONFIG_CMD_ID,
+            payload,
+            refresh_cmd_ids=(TIMER_CONFIG_CMD_ID,),
+        )
 
     async def _refresh_after_action(self) -> None:
         """Request a bounded state refresh after a control write.
@@ -1164,15 +1226,20 @@ class HaloWebSocketClient:
             if slot_index is not None:
                 self.data.timer_configs[int(slot_index)] = {
                     "slot_index": parsed.get("slot_index"),
+                    "timer_type": parsed.get("timer_type"),
+                    "timer_mode": parsed.get("timer_mode"),
                     "active": parsed.get("active"),
-                    "equipment_flags": parsed.get("equipment_flags"),
+                    "enables": parsed.get("enables", 0),
                     "equipment_enabled": parsed.get("equipment_enabled", []),
-                    "has_base_timer_flag": parsed.get("has_base_timer_flag"),
-                    "unknown_equipment_flags": parsed.get("unknown_equipment_flags", []),
+                    "start_hour": parsed.get("start_hour", 0),
+                    "start_minute": parsed.get("start_minute", 0),
+                    "stop_hour": parsed.get("stop_hour", 0),
+                    "stop_minute": parsed.get("stop_minute", 0),
                     "start_time": parsed.get("start_time"),
                     "stop_time": parsed.get("stop_time"),
                     "duration_minutes": parsed.get("duration_minutes"),
                     "overnight": parsed.get("overnight"),
                     "speed": parsed.get("speed"),
                     "speed_code": parsed.get("speed_code"),
+                    "season": parsed.get("season"),
                 }

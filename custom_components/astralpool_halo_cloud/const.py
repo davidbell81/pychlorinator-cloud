@@ -11,7 +11,7 @@ CONF_DEVICE_NAME = "device_name"
 CONF_AREA_ID = "area_id"
 CONF_TIME_DRIFT_THRESHOLD_MINUTES = "time_drift_threshold_minutes"
 
-PLATFORMS = ["sensor", "binary_sensor", "select", "number", "button"]
+PLATFORMS = ["sensor", "binary_sensor", "select", "number", "button", "switch", "time"]
 
 
 def default_device_name(serial_number: str | None) -> str:
