@@ -5,9 +5,7 @@ Provides on/off control for individual equipment timer slots.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -16,12 +14,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import HaloCloudCoordinator
 from .entity import HaloCloudEntity
-
-
-@dataclass
-class _SlotDesc:
-    key: str
-    name: str
 
 
 async def async_setup_entry(
@@ -45,7 +37,7 @@ class HaloTimerSlotSwitch(HaloCloudEntity, SwitchEntity):
 
     def __init__(self, coordinator: HaloCloudCoordinator, slot_index: int) -> None:
         self._slot_index = slot_index
-        desc = _SlotDesc(
+        desc = SwitchEntityDescription(
             key=f"timer_slot_{slot_index}_active",
             name=f"Timer Slot {slot_index + 1} Active",
         )
