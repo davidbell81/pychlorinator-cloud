@@ -1285,6 +1285,7 @@ class HaloWebSocketClient:
         elif parsed.get("type") == "timer_config":
             slot_index = parsed.get("slot_index")
             timer_type = parsed.get("timer_type")
+            timer_mode = parsed.get("timer_mode")
             if slot_index is not None:
                 config_dict = {
                     "slot_index": parsed.get("slot_index"),
