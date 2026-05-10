@@ -675,26 +675,17 @@ class HaloWebSocketClient:
             except Exception as err:
                 LOGGER.debug("ReadForCatchAll(%d) failed: %s", cmd_id, err)
 
-        # Request all timer slot configs (cmd 0x0193).
-        # Each request payload identifies [timer_type, slot_index, timer_mode, ...].
-        # Request all combinations: pump+lighting × 4 slots × winter+summer.
-        for t_type in (TIMER_TYPE_PUMP, TIMER_TYPE_LIGHTING):
-            for t_slot in range(4):
-                for t_mode in (TIMER_MODE_WINTER, TIMER_MODE_SUMMER):
-                    if not self._running:
-                        break
-                    try:
-                        payload = bytes([t_type, t_slot, t_mode]) + bytes(14)
-                        read_cmd = bytes([0x02]) + struct.pack("<H", 0x0193) + payload
-                        await self.send_command(read_cmd)
-                        await asyncio.sleep(0.3)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as err:
-                        LOGGER.debug(
-                            "ReadTimerConfig(type=%d slot=%d mode=%d) failed: %s",
-                            t_type, t_slot, t_mode, err,
-                        )
+        # Request timer slot configs (cmd 0x0193).
+        # The device ignores payload and returns its current timer config.
+        if self._running:
+            try:
+                read_cmd = bytes([0x02]) + struct.pack("<H", 0x0193) + bytes(17)
+                await self.send_command(read_cmd)
+                await asyncio.sleep(0.3)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                LOGGER.debug("ReadTimerConfig failed: %s", err)
 
         LOGGER.debug("Initial catch-all data snapshot complete")
 
@@ -737,35 +728,40 @@ class HaloWebSocketClient:
         await self._request_all_timer_slot_configs()
 
     async def _request_all_timer_slot_configs(self) -> None:
-        """Request cmd 0x0193 for all timer type/slot/mode combinations."""
-        for t_type in (TIMER_TYPE_PUMP, TIMER_TYPE_LIGHTING):
-            for t_slot in range(4):
-                for t_mode in (TIMER_MODE_WINTER, TIMER_MODE_SUMMER):
-                    payload = bytes([t_type, t_slot, t_mode]) + bytes(14)
-                    read_cmd = bytes([0x02]) + struct.pack("<H", 0x0193) + payload
-                    await self.send_command(read_cmd)
-                    await _sleep_briefly(0.3)
+        """Request cmd 0x0193 timer slot configs.
+
+        The device ignores the request payload and streams its current timer
+        config regardless, so a single request is sufficient.
+        """
+        await self.request_data(0x0193)
+        await _sleep_briefly(0.3)
 
     def _is_active_timer_mode(self, timer_mode: Any) -> bool:
-        """Return True if this timer_mode matches the currently active season."""
-        if self.data.timer_season is None:
-            return True  # accept everything until we know the season
-        active_mode = TIMER_MODE_SUMMER if self.data.timer_season == "Summer" else TIMER_MODE_WINTER
-        return int(timer_mode) == active_mode
+        """Return True — always store received configs; rebuild handles season preference."""
+        return True
 
     def _rebuild_active_timer_configs(self) -> None:
-        """Rebuild active-season timer_configs from the full all_* stores."""
+        """Rebuild equipment/lighting timer_configs from the full all_* stores.
+
+        Prefers the active season's config for each slot; falls back to the
+        other season's config when the active season's data hasn't arrived yet
+        (the cloud API appears to only stream Winter configs regardless of request).
+        """
         active_mode = TIMER_MODE_SUMMER if self.data.timer_season == "Summer" else TIMER_MODE_WINTER
-        self.data.equipment_timer_configs = {
-            slot: cfg
-            for (slot, mode), cfg in self.data.all_equipment_timer_configs.items()
-            if mode == active_mode
-        }
-        self.data.lighting_timer_configs = {
-            slot: cfg
-            for (slot, mode), cfg in self.data.all_lighting_timer_configs.items()
-            if mode == active_mode
-        }
+        fallback_mode = TIMER_MODE_WINTER if active_mode == TIMER_MODE_SUMMER else TIMER_MODE_SUMMER
+
+        def _best_configs(store: dict[tuple[int, int], dict]) -> dict[int, dict]:
+            all_slots = {slot for slot, _ in store}
+            result: dict[int, dict] = {}
+            for slot in all_slots:
+                if (slot, active_mode) in store:
+                    result[slot] = store[(slot, active_mode)]
+                elif (slot, fallback_mode) in store:
+                    result[slot] = store[(slot, fallback_mode)]
+            return result
+
+        self.data.equipment_timer_configs = _best_configs(self.data.all_equipment_timer_configs)
+        self.data.lighting_timer_configs = _best_configs(self.data.all_lighting_timer_configs)
 
     async def write_timer_slot(
         self,
