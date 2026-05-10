@@ -27,6 +27,7 @@ _EXPECTED_RECONNECT_BACKOFF_START = 60
 _UNEXPECTED_RECONNECT_BACKOFF_START = 30
 _RECONNECT_BACKOFF_MAX = 900
 _JITTER_MAX_SECONDS = 15
+_PUSH_THROTTLE_SECONDS = 1.0
 
 
 class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
@@ -52,13 +53,34 @@ class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
         self._started_listener: CALLBACK_TYPE | None = None
         self._connect_lock = asyncio.Lock()
         self._last_connection_issue: str | None = None
+        self._push_timer: CALLBACK_TYPE | None = None
+        self._push_unseen: bool = False
         self.client.on_data = self._handle_client_data
         self.client.on_disconnect = self._handle_client_disconnect
         self.data = self.client.data
 
     @callback
     def _handle_client_data(self, _: dict[str, Any]) -> None:
-        """Push fresh WebSocket data into Home Assistant."""
+        """Throttle WebSocket data pushes to HA — at most once per second."""
+        if self._push_timer is None:
+            self._do_push()
+            self._push_timer = self.hass.async_call_later(
+                _PUSH_THROTTLE_SECONDS, self._push_timer_expired
+            )
+        else:
+            self._push_unseen = True
+
+    @callback
+    def _push_timer_expired(self, _now: Any) -> None:
+        self._push_timer = None
+        if self._push_unseen:
+            self._push_unseen = False
+            self._do_push()
+            self._push_timer = self.hass.async_call_later(
+                _PUSH_THROTTLE_SECONDS, self._push_timer_expired
+            )
+
+    def _do_push(self) -> None:
         try:
             self.async_set_updated_data(self.client.data)
         except Exception:
@@ -211,6 +233,10 @@ class HaloCloudCoordinator(DataUpdateCoordinator[ChlorinatorLiveData]):
     async def async_shutdown(self) -> None:
         """Disconnect the WebSocket client and stop reconnect attempts."""
         self._shutdown_event.set()
+
+        if self._push_timer is not None:
+            self._push_timer()
+            self._push_timer = None
 
         if self._started_listener is not None:
             self._started_listener()
