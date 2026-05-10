@@ -120,7 +120,8 @@ class ChlorinatorLiveData:
     timer_season: Optional[str] = None
     timer_season_source: Optional[str] = None
     timer_profile_index: Optional[int] = None
-    timer_configs: dict[int, dict[str, Any]] = field(default_factory=dict)
+    equipment_timer_configs: dict[int, dict[str, Any]] = field(default_factory=dict)
+    lighting_timer_configs: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     # Raw payloads for debugging
     raw_payloads: dict[int, bytes] = field(default_factory=dict)
@@ -714,6 +715,7 @@ class HaloWebSocketClient:
         slot_index: int,
         *,
         enabled: Optional[bool] = None,
+        enables: Optional[int] = None,
         start_hour: Optional[int] = None,
         start_minute: Optional[int] = None,
         stop_hour: Optional[int] = None,
@@ -728,7 +730,7 @@ class HaloWebSocketClient:
         """
         if not self._ws or not self.data.connected:
             raise RuntimeError("Not connected")
-        existing = self.data.timer_configs.get(slot_index)
+        existing = self.data.equipment_timer_configs.get(slot_index)
         if existing is None:
             raise RuntimeError(
                 f"Timer slot {slot_index} config not yet received from device. "
@@ -737,7 +739,7 @@ class HaloWebSocketClient:
         payload = build_timer_config_payload(
             slot_index,
             enabled=enabled if enabled is not None else existing.get("active", False),
-            enables=existing.get("enables", 0),
+            enables=enables if enables is not None else existing.get("enables", 0),
             start_hour=start_hour if start_hour is not None else existing.get("start_hour", 0),
             start_minute=start_minute if start_minute is not None else existing.get("start_minute", 0),
             stop_hour=stop_hour if stop_hour is not None else existing.get("stop_hour", 0),
@@ -1223,10 +1225,11 @@ class HaloWebSocketClient:
                 self.data.timer_season_source = "state"
         elif parsed.get("type") == "timer_config":
             slot_index = parsed.get("slot_index")
+            timer_type = parsed.get("timer_type")
             if slot_index is not None:
-                self.data.timer_configs[int(slot_index)] = {
+                config_dict = {
                     "slot_index": parsed.get("slot_index"),
-                    "timer_type": parsed.get("timer_type"),
+                    "timer_type": timer_type,
                     "timer_mode": parsed.get("timer_mode"),
                     "active": parsed.get("active"),
                     "enables": parsed.get("enables", 0),
@@ -1243,3 +1246,19 @@ class HaloWebSocketClient:
                     "speed_code": parsed.get("speed_code"),
                     "season": parsed.get("season"),
                 }
+                LOGGER.debug(
+                    "Timer config received: type=%s slot=%s active=%s start=%s:%s stop=%s:%s speed=%s enables=0x%04x",
+                    timer_type,
+                    slot_index,
+                    config_dict["active"],
+                    config_dict["start_hour"],
+                    config_dict["start_minute"],
+                    config_dict["stop_hour"],
+                    config_dict["stop_minute"],
+                    config_dict["speed"],
+                    config_dict["enables"],
+                )
+                if timer_type == 0:
+                    self.data.equipment_timer_configs[int(slot_index)] = config_dict
+                elif timer_type == 1:
+                    self.data.lighting_timer_configs[int(slot_index)] = config_dict

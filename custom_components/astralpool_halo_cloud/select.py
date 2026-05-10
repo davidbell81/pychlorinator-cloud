@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from pychlorinator_cloud.timers import TIMER_MODE_SUMMER, TIMER_MODE_WINTER
+from pychlorinator_cloud.timers import TIMER_MODE_SUMMER, TIMER_MODE_WINTER, TIMER_SPEED_LEVELS
 
 from .const import DOMAIN
 from .coordinator import HaloCloudCoordinator
@@ -117,18 +117,19 @@ async def async_setup_entry(
 ) -> None:
     """Set up AstralPool Halo Cloud select entities."""
     coordinator: HaloCloudCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            HaloModeSelect(coordinator),
-            HaloPumpSpeedSelect(coordinator),
-            HaloActionSelect(coordinator, LIGHT_SELECT_DESCRIPTION),
-            HaloActionSelect(coordinator, BLADE_SELECT_DESCRIPTION),
-            HaloActionSelect(coordinator, JETS_SELECT_DESCRIPTION),
-            HaloActionSelect(coordinator, HEATER_SELECT_DESCRIPTION),
-            HaloAcidDosingSelect(coordinator),
-            HaloTimerSeasonSelect(coordinator),
-        ]
-    )
+    entities: list[SelectEntity] = [
+        HaloModeSelect(coordinator),
+        HaloPumpSpeedSelect(coordinator),
+        HaloActionSelect(coordinator, LIGHT_SELECT_DESCRIPTION),
+        HaloActionSelect(coordinator, BLADE_SELECT_DESCRIPTION),
+        HaloActionSelect(coordinator, JETS_SELECT_DESCRIPTION),
+        HaloActionSelect(coordinator, HEATER_SELECT_DESCRIPTION),
+        HaloAcidDosingSelect(coordinator),
+        HaloTimerSeasonSelect(coordinator),
+    ]
+    for slot_index in range(4):
+        entities.append(HaloTimerSlotPumpSpeedSelect(coordinator, slot_index))
+    async_add_entities(entities)
 
 
 class HaloModeSelect(HaloCloudEntity, SelectEntity):
@@ -338,7 +339,7 @@ class HaloTimerSeasonSelect(HaloCloudEntity, SelectEntity):
         timer_mode = self._SEASON_TO_MODE.get(option)
         if timer_mode is None:
             raise ValueError(f"Invalid season: {option}")
-        configs = client.data.timer_configs
+        configs = client.data.equipment_timer_configs
         if not configs:
             raise HomeAssistantError(
                 "Timer slot configs not yet received — wait for initial data fetch."
@@ -346,4 +347,54 @@ class HaloTimerSeasonSelect(HaloCloudEntity, SelectEntity):
         for slot_index in sorted(configs):
             await client.write_timer_slot(slot_index, timer_mode=timer_mode)
         client.data.timer_season = option
+        self.coordinator.async_set_updated_data(client.data)
+
+
+_SPEED_LABEL_TO_CODE = {label: code for code, label in TIMER_SPEED_LEVELS.items() if label != "AI"}
+_PUMP_SPEED_OPTIONS = ["Low", "Medium", "High"]
+
+
+class HaloTimerSlotPumpSpeedSelect(HaloCloudEntity, SelectEntity):
+    """Select entity for the filter pump speed in a single equipment timer slot."""
+
+    _attr_options = _PUMP_SPEED_OPTIONS
+    _attr_icon = "mdi:speedometer"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: HaloCloudCoordinator, slot_index: int) -> None:
+        self._slot_index = slot_index
+        super().__init__(
+            coordinator,
+            HaloSelectEntityDescription(
+                key=f"timer_slot_{slot_index}_pump_speed",
+                name=f"Timer Slot {slot_index + 1} Pump Speed",
+            ),
+        )
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.client.data.connected
+            and self._slot_index in self.coordinator.client.data.equipment_timer_configs
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        config = data.equipment_timer_configs.get(self._slot_index)
+        if config is None:
+            return None
+        return TIMER_SPEED_LEVELS.get(config.get("speed_code", -1))
+
+    async def async_select_option(self, option: str) -> None:
+        client = self.coordinator.client
+        if not client.data.connected:
+            raise HomeAssistantError("Chlorinator cloud is not connected")
+        speed_code = _SPEED_LABEL_TO_CODE.get(option)
+        if speed_code is None:
+            raise ValueError(f"Invalid pump speed: {option}")
+        await client.write_timer_slot(self._slot_index, speed_code=speed_code)
         self.coordinator.async_set_updated_data(client.data)
