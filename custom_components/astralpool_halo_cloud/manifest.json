@@ -16,7 +16,7 @@
     }
   ],
   "requirements": [
-    "pychlorinator_cloud @ git+https://github.com/robmarkoski/pychlorinator-cloud.git@v0.2.3"
+    "pychlorinator_cloud @ git+https://github.com/robmarkoski/pychlorinator-cloud.git@v0.3.0"
   ],
-  "version": "0.2.3"
+  "version": "0.3.0"
 }
