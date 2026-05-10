@@ -73,7 +73,7 @@ class HaloTimerSlotTime(HaloCloudEntity, TimeEntity):
         return (
             super().available
             and self.coordinator.client.data.connected
-            and self._slot_index in self.coordinator.client.data.timer_configs
+            and self._slot_index in self.coordinator.client.data.equipment_timer_configs
         )
 
     @property
@@ -81,7 +81,7 @@ class HaloTimerSlotTime(HaloCloudEntity, TimeEntity):
         data = self.coordinator.data
         if data is None:
             return None
-        config = data.timer_configs.get(self._slot_index)
+        config = data.equipment_timer_configs.get(self._slot_index)
         if config is None:
             return None
         if self._is_start:

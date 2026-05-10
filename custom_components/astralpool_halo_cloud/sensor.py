@@ -34,9 +34,9 @@ class HaloSensorEntityDescription(SensorEntityDescription):
 
 def _active_timer_count(data: ChlorinatorLiveData) -> int | None:
     """Return the count of active equipment timer slots when known."""
-    if not data.timer_configs:
+    if not data.equipment_timer_configs:
         return None
-    return sum(1 for timer in data.timer_configs.values() if timer.get("active"))
+    return sum(1 for timer in data.equipment_timer_configs.values() if timer.get("active"))
 
 
 def _timer_summary_value(data: ChlorinatorLiveData) -> str | None:
@@ -52,12 +52,12 @@ def _timer_summary_value(data: ChlorinatorLiveData) -> str | None:
 
 def _timer_summary_attributes(data: ChlorinatorLiveData) -> dict[str, object]:
     """Return schedule details for the timer summary sensor."""
-    if not data.timer_configs and data.timer_season is None and data.equipment_timer_slots is None:
+    if not data.equipment_timer_configs and data.timer_season is None and data.equipment_timer_slots is None:
         return {}
 
     ordered_slots = [
-        data.timer_configs[index]
-        for index in sorted(data.timer_configs)
+        data.equipment_timer_configs[index]
+        for index in sorted(data.equipment_timer_configs)
     ]
     return {
         "season": data.timer_season,
@@ -66,7 +66,7 @@ def _timer_summary_attributes(data: ChlorinatorLiveData) -> dict[str, object]:
         "equipment_timer_slots": data.equipment_timer_slots,
         "lighting_timer_slots": data.lighting_timer_slots,
         "capability_flags": data.timer_capability_flags,
-        "slot_count_seen": len(data.timer_configs),
+        "slot_count_seen": len(data.equipment_timer_configs),
         "slots": ordered_slots,
     }
 
