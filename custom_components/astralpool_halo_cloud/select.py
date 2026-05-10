@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from pychlorinator_cloud.timers import TIMER_MODE_SUMMER, TIMER_MODE_WINTER, TIMER_SPEED_LEVELS
+from pychlorinator_cloud.timers import TIMER_SPEED_LEVELS
 
 from .const import DOMAIN
 from .coordinator import HaloCloudCoordinator
@@ -125,7 +125,6 @@ async def async_setup_entry(
         HaloActionSelect(coordinator, JETS_SELECT_DESCRIPTION),
         HaloActionSelect(coordinator, HEATER_SELECT_DESCRIPTION),
         HaloAcidDosingSelect(coordinator),
-        HaloTimerSeasonSelect(coordinator),
     ]
     for slot_index in range(4):
         entities.append(HaloTimerSlotPumpSpeedSelect(coordinator, slot_index))
@@ -297,60 +296,6 @@ class HaloAcidDosingSelect(HaloCloudEntity, SelectEntity):
             if minutes is None:
                 raise ValueError(f"Invalid option: {option}")
             await client.disable_acid_dosing(minutes)
-        self.coordinator.async_set_updated_data(client.data)
-
-
-class HaloTimerSeasonSelect(HaloCloudEntity, SelectEntity):
-    """Select entity for switching between Summer and Winter timer profiles.
-
-    Writing a new season rewrites all known timer slots with the updated
-    TimerMode byte so the controller activates the matching profile.
-    """
-
-    _attr_options = ["Winter", "Summer"]
-    _SEASON_TO_MODE = {"Winter": TIMER_MODE_WINTER, "Summer": TIMER_MODE_SUMMER}
-
-    @property
-    def available(self) -> bool:
-        return super().available and self.coordinator.client.data.connected
-
-    def __init__(self, coordinator: HaloCloudCoordinator) -> None:
-        super().__init__(
-            coordinator,
-            HaloSelectEntityDescription(
-                key="timer_season_select",
-                name="Timer Season",
-                icon="mdi:weather-sunny-alert",
-                entity_registry_enabled_default=False,
-            ),
-        )
-
-    @property
-    def current_option(self) -> str | None:
-        data = self.coordinator.data
-        if data is None:
-            return None
-        return data.timer_season
-
-    async def async_select_option(self, option: str) -> None:
-        client = self.coordinator.client
-        if not client.data.connected:
-            raise HomeAssistantError("Chlorinator cloud is not connected")
-        timer_mode = self._SEASON_TO_MODE.get(option)
-        if timer_mode is None:
-            raise ValueError(f"Invalid season: {option}")
-        # Collect all known slots across both season configs for this type
-        all_slots = {
-            slot for (slot, _mode) in client.data.all_equipment_timer_configs
-        } or set(client.data.equipment_timer_configs)
-        if not all_slots:
-            raise HomeAssistantError(
-                "Timer slot configs not yet received — wait for initial data fetch."
-            )
-        for slot_index in sorted(all_slots):
-            await client.write_timer_slot(slot_index, timer_mode=timer_mode)
-        client.data.timer_season = option
-        client._rebuild_active_timer_configs()
         self.coordinator.async_set_updated_data(client.data)
 
 

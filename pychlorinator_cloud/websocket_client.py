@@ -25,10 +25,7 @@ from .exceptions import (
 from .setpoints import build_setpoint_command
 from .signalling import map_signalling_failure
 from .timers import (
-    TIMER_MODE_SUMMER,
     TIMER_MODE_WINTER,
-    TIMER_TYPE_LIGHTING,
-    TIMER_TYPE_PUMP,
     build_timer_config_payload,
     parse_timer_capabilities,
     parse_timer_config,
@@ -121,12 +118,9 @@ class ChlorinatorLiveData:
     timer_season: Optional[str] = None
     timer_season_source: Optional[str] = None
     timer_profile_index: Optional[int] = None
-    # Active-season timer configs (slot_index → config) — rebuilt when season changes
+    # Timer configs keyed by slot_index — always Winter (cloud only streams Winter data)
     equipment_timer_configs: dict[int, dict[str, Any]] = field(default_factory=dict)
     lighting_timer_configs: dict[int, dict[str, Any]] = field(default_factory=dict)
-    # All received timer configs keyed by (slot_index, timer_mode)
-    all_equipment_timer_configs: dict[tuple[int, int], dict[str, Any]] = field(default_factory=dict)
-    all_lighting_timer_configs: dict[tuple[int, int], dict[str, Any]] = field(default_factory=dict)
 
     # Raw payloads for debugging
     raw_payloads: dict[int, bytes] = field(default_factory=dict)
@@ -655,6 +649,7 @@ class HaloWebSocketClient:
             400,   # 0x0190 timer capabilities
             401,   # 0x0191 timer setup / season
             402,   # 0x0192 timer profile pointer
+            403,   # 0x0193 timer slot config
             600,
             601,
             602,
@@ -674,18 +669,6 @@ class HaloWebSocketClient:
                 raise
             except Exception as err:
                 LOGGER.debug("ReadForCatchAll(%d) failed: %s", cmd_id, err)
-
-        # Request timer slot configs (cmd 0x0193).
-        # The device ignores payload and returns its current timer config.
-        if self._running:
-            try:
-                read_cmd = bytes([0x02]) + struct.pack("<H", 0x0193) + bytes(17)
-                await self.send_command(read_cmd)
-                await asyncio.sleep(0.3)
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                LOGGER.debug("ReadTimerConfig failed: %s", err)
 
         LOGGER.debug("Initial catch-all data snapshot complete")
 
@@ -722,46 +705,9 @@ class HaloWebSocketClient:
 
     async def request_timer_data(self) -> None:
         """Request a fresh snapshot of all timer characteristics."""
-        for cmd_id in (0x0190, 0x0191, 0x0192):
+        for cmd_id in (0x0190, 0x0191, 0x0192, 0x0193):
             await self.request_data(cmd_id)
             await _sleep_briefly(0.3)
-        await self._request_all_timer_slot_configs()
-
-    async def _request_all_timer_slot_configs(self) -> None:
-        """Request cmd 0x0193 timer slot configs.
-
-        The device ignores the request payload and streams its current timer
-        config regardless, so a single request is sufficient.
-        """
-        await self.request_data(0x0193)
-        await _sleep_briefly(0.3)
-
-    def _is_active_timer_mode(self, timer_mode: Any) -> bool:
-        """Return True — always store received configs; rebuild handles season preference."""
-        return True
-
-    def _rebuild_active_timer_configs(self) -> None:
-        """Rebuild equipment/lighting timer_configs from the full all_* stores.
-
-        Prefers the active season's config for each slot; falls back to the
-        other season's config when the active season's data hasn't arrived yet
-        (the cloud API appears to only stream Winter configs regardless of request).
-        """
-        active_mode = TIMER_MODE_SUMMER if self.data.timer_season == "Summer" else TIMER_MODE_WINTER
-        fallback_mode = TIMER_MODE_WINTER if active_mode == TIMER_MODE_SUMMER else TIMER_MODE_SUMMER
-
-        def _best_configs(store: dict[tuple[int, int], dict]) -> dict[int, dict]:
-            all_slots = {slot for slot, _ in store}
-            result: dict[int, dict] = {}
-            for slot in all_slots:
-                if (slot, active_mode) in store:
-                    result[slot] = store[(slot, active_mode)]
-                elif (slot, fallback_mode) in store:
-                    result[slot] = store[(slot, fallback_mode)]
-            return result
-
-        self.data.equipment_timer_configs = _best_configs(self.data.all_equipment_timer_configs)
-        self.data.lighting_timer_configs = _best_configs(self.data.all_lighting_timer_configs)
 
     async def write_timer_slot(
         self,
@@ -783,11 +729,8 @@ class HaloWebSocketClient:
         """
         if not self._ws or not self.data.connected:
             raise RuntimeError("Not connected")
-        active_mode = TIMER_MODE_SUMMER if self.data.timer_season == "Summer" else TIMER_MODE_WINTER
-        resolved_mode = timer_mode if timer_mode is not None else active_mode
-        existing = self.data.all_equipment_timer_configs.get(
-            (slot_index, resolved_mode)
-        ) or self.data.equipment_timer_configs.get(slot_index)
+        resolved_mode = timer_mode if timer_mode is not None else TIMER_MODE_WINTER
+        existing = self.data.equipment_timer_configs.get(slot_index)
         if existing is None:
             raise RuntimeError(
                 f"Timer slot {slot_index} config not yet received from device. "
@@ -1274,21 +1217,18 @@ class HaloWebSocketClient:
             if season is not None:
                 self.data.timer_season = season
                 self.data.timer_season_source = "setup"
-                self._rebuild_active_timer_configs()
         elif parsed.get("type") == "timer_state":
             self.data.timer_profile_index = parsed.get("profile_index")
             season = parsed.get("season")
             if season is not None:
                 self.data.timer_season = season
                 self.data.timer_season_source = "state"
-                self._rebuild_active_timer_configs()
         elif parsed.get("type") == "timer_config":
             slot_index = parsed.get("slot_index")
             timer_type = parsed.get("timer_type")
-            timer_mode = parsed.get("timer_mode")
             if slot_index is not None:
                 config_dict = {
-                    "slot_index": parsed.get("slot_index"),
+                    "slot_index": slot_index,
                     "timer_type": timer_type,
                     "timer_mode": parsed.get("timer_mode"),
                     "active": parsed.get("active"),
@@ -1321,10 +1261,6 @@ class HaloWebSocketClient:
                     config_dict["enables"],
                 )
                 if timer_type == 0:
-                    self.data.all_equipment_timer_configs[(int(slot_index), int(timer_mode))] = config_dict
-                    if self._is_active_timer_mode(timer_mode):
-                        self.data.equipment_timer_configs[int(slot_index)] = config_dict
+                    self.data.equipment_timer_configs[int(slot_index)] = config_dict
                 elif timer_type == 1:
-                    self.data.all_lighting_timer_configs[(int(slot_index), int(timer_mode))] = config_dict
-                    if self._is_active_timer_mode(timer_mode):
-                        self.data.lighting_timer_configs[int(slot_index)] = config_dict
+                    self.data.lighting_timer_configs[int(slot_index)] = config_dict
