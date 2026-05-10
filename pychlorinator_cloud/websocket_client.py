@@ -1247,9 +1247,11 @@ class HaloWebSocketClient:
                     "season": parsed.get("season"),
                 }
                 LOGGER.debug(
-                    "Timer config received: type=%s slot=%s active=%s start=%s:%s stop=%s:%s speed=%s enables=0x%04x",
+                    "Timer config received: type=%s slot=%s mode=%s(%s) active=%s start=%s:%02d stop=%s:%02d speed=%s enables=0x%04x",
                     timer_type,
                     slot_index,
+                    config_dict["timer_mode"],
+                    config_dict["season"],
                     config_dict["active"],
                     config_dict["start_hour"],
                     config_dict["start_minute"],
