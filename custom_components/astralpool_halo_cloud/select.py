@@ -339,14 +339,18 @@ class HaloTimerSeasonSelect(HaloCloudEntity, SelectEntity):
         timer_mode = self._SEASON_TO_MODE.get(option)
         if timer_mode is None:
             raise ValueError(f"Invalid season: {option}")
-        configs = client.data.equipment_timer_configs
-        if not configs:
+        # Collect all known slots across both season configs for this type
+        all_slots = {
+            slot for (slot, _mode) in client.data.all_equipment_timer_configs
+        } or set(client.data.equipment_timer_configs)
+        if not all_slots:
             raise HomeAssistantError(
                 "Timer slot configs not yet received — wait for initial data fetch."
             )
-        for slot_index in sorted(configs):
+        for slot_index in sorted(all_slots):
             await client.write_timer_slot(slot_index, timer_mode=timer_mode)
         client.data.timer_season = option
+        client._rebuild_active_timer_configs()
         self.coordinator.async_set_updated_data(client.data)
 
 
